@@ -3,6 +3,8 @@
 
 /* WinGroove soundbank format
  *
+ * Reverse engineering by pachuco and Alex A. <coderain@sdf.org>
+ *
  * Overall structure:
  * - file header
  * - 16 * 256 bytes of int8_t square and triangle waves, with no apparent use
@@ -19,10 +21,9 @@
  * - sample data resembles u-law, except that bottom half is inverted
  * - most sample data is mono, some will be L-R interleaved pairs(specified by SampleHeaders)
  * - tuning is 8.8 fixed-point, 256 for every semitone
- * - envelope lengths are 10.6 fixed-point, 64 for each second(?)
- * - volume of 256 is 100%
+ * - volume of 256 is 100%, values above amplify(where does it stop?)
+ * - envelope lengths(?)
 */
-//Reverse engineering by pachuco and Alex A. <coderain@sdf.org>
 
 
 #include <stdint.h>

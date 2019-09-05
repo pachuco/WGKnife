@@ -91,15 +91,17 @@ int writeWav(wg_SampleHdr* smpHdr, void* base, char* dest, int isTuned) {
     wDataHdr.id_data = IFFID_data;
     wDataHdr.length  = outBufLen;
     
+    uint32_t absTune = 49*0x100 - smpHdr->tuning;
+    
     wSmpHdr.smpl_id         = IFFID_smpl;
     wSmpHdr.smpl_len        = sizeof(wav_SmplHeader) + sizeof(wav_SampleLoop) - 4;
     wSmpHdr.dwManufacturer  = 0;
     wSmpHdr.dwProduct       = 0;
     wSmpHdr.dwSamplePeriod  = 1000000000 / SAMPLE_RATE;
     //not quite correct
-    wSmpHdr.dwBaseNote      = 60;//60 - ((smpHdr->tuning - 1)/256); //60
+    wSmpHdr.dwBaseNote      = !isTuned ? 60 :  (absTune) >> 8;
     //positive only pitch correction
-    wSmpHdr.dwPitchFraction = 0;//smpHdr->tuning << 24; //0
+    wSmpHdr.dwPitchFraction = !isTuned ?  0 :  (~absTune) << 24;
     wSmpHdr.dwSMPTEFormat   = 0;
     wSmpHdr.dwSMPTEOffset   = 0;
     wSmpHdr.dwSampleLoops   = numLoops; // number of Loop structs

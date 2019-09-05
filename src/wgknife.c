@@ -50,7 +50,7 @@ void getSampleName(char* outName, wg_SampleHdr* smpHdr, SampleIdent* identTab) {
 
 #define SAMPLE_RATE     (22050)
 #define BITS_PER_SAMPLE (16)
-int writeWav(wg_SampleHdr* smpHdr, void* base, char* dest) {
+int writeWav(wg_SampleHdr* smpHdr, void* base, char* dest, int isTuned) {
     wav_FileHeader wFileHdr;
     wav_FormatHeader wFormHdr;
     wav_DataHeader wDataHdr;
@@ -175,10 +175,10 @@ void describeSampleHdr(int nTabs, FILE* out, void* base, wg_SampleHdr* p) {
     t_fprintf(nTabs, out, "* U32 Sample end:   %08Xh (samp len %u samples)\n", p->offEnd, lenSamp);
     t_fprintf(nTabs, out, "* U16 Volume: %u\n", p->volume);
     t_fprintf(nTabs, out, "* I16 Relative tuning: "CENTP" semitones\n", (float)p->tuning / 0x100);
-    t_fprintf(nTabs, out, "* U16 Envelope attack  len: %f\n", (float)p->lenAttack/64);
-    t_fprintf(nTabs, out, "* U16 Envelope decay   len: %f\n", (float)p->lenDecay/64);
+    t_fprintf(nTabs, out, "* U16 Envelope attack  len:    %u\n", p->lenAttack);
+    t_fprintf(nTabs, out, "* U16 Envelope decay   len:    %u\n", p->lenDecay);
     t_fprintf(nTabs, out, "* U16 Envelope sustain volume: %u\n", p->volSustain);
-    t_fprintf(nTabs, out, "* U16 Envelope release len: %f\n", (float)p->lenRelease/64);
+    t_fprintf(nTabs, out, "* U16 Envelope release len:    %u\n", p->lenRelease);
     t_fprintf(nTabs, out, "* U8  Flags:\n");
     for (unsigned int i=0; i<8; i++) {
         if (p->flags & (1<<i)) t_fprintf(nTabs+1, out, "%s\n", flagNameTable[i]);
@@ -186,28 +186,18 @@ void describeSampleHdr(int nTabs, FILE* out, void* base, wg_SampleHdr* p) {
     describeUnkBytes(nTabs, out, base, &p->unk01, 3);
 }
 
-void describeSplit(int nTabs, FILE* out, void* base, wg_Split* p, size_t len) {
-    for (unsigned int i=0; i < len; i++) {
-        t_fprintf(nTabs, out, "Split nr: %u\n", i);
-        
-        t_fprintf(nTabs, out, "* 2xU8 Note range: %u-%u\n", p->rangeStart, p->rangeEnd);
-        t_fprintf(nTabs, out, "* U8   Drum map index: %u\n", p->mapIndex);
-        t_fprintf(nTabs, out, "* I8   Panning: %i\n", p->pan);
-        describeUnkBytes(nTabs, out, base, &p->unk01, 2);            
-        t_fprintf(nTabs, out, "* I16  Relative tuning: "CENTP" semitones\n", (float)p->tuning / 0x100);
-        t_fprintf(nTabs, out, "* U32  Sample header offset: %08Xh\n", p->smpHeadOff);
-        
-        t_fprintf(nTabs, out, "Sample header:\n");
-        describeSampleHdr(nTabs+1, out, base, base + p->smpHeadOff);
-        
-        p++;
-        fprintf(out, "\n");
-    }
+void describeSplit(int nTabs, FILE* out, void* base, wg_Split* p) {
+    t_fprintf(nTabs, out, "* 2xU8 Note range: %u-%u\n", p->rangeStart, p->rangeEnd);
+    t_fprintf(nTabs, out, "* U8   Drum map index: %u\n", p->mapIndex);
+    t_fprintf(nTabs, out, "* I8   Panning: %i\n", p->pan);
+    describeUnkBytes(nTabs, out, base, &p->unk01, 2);            
+    t_fprintf(nTabs, out, "* I16  Relative tuning: "CENTP" semitones\n", (float)p->tuning / 0x100);
+    t_fprintf(nTabs, out, "* U32  Sample header offset: %08Xh\n", p->smpHeadOff);
+    fprintf(out, "\n");
 }
 
 void describePatch(int nTabs, FILE* out, void* base, wg_Patch* p) {
     wg_DrumTable* dmap   = (wg_DrumTable*)((char*)p + sizeof(wg_Patch));
-    wg_Split*     spBase = (wg_Split*)    ((char*)p + sizeof(wg_Patch) + (p->isDrumKit ? 128 : 0));
     
     if (!p->volume) {
         t_fprintf(nTabs, out, "DUMMY PATCH\n");
@@ -232,9 +222,6 @@ void describePatch(int nTabs, FILE* out, void* base, wg_Patch* p) {
         }
         fprintf(out, "\n");
     }
-    
-    t_fprintf(nTabs, out, "Splits:\n");
-    describeSplit(nTabs+1, out, base, spBase, p->splitNum);
 }
 
 void describeHeader(int nTabs, FILE* out, void* base, wg_BankHeader* p) {
@@ -253,11 +240,28 @@ int describeWgbank(FILE* out, void* base, size_t len) {
     describeHeader(0, out, base, base);
     
     for (unsigned int i=0; i < 256; i++) {
-        wg_Patch* patch = base + midiMap->t[i];
+        wg_Patch* patch  = (wg_Patch*)((char*)base + midiMap->t[i]);
+        uint32_t splitOff = midiMap->t[i] + sizeof(wg_Patch) + (patch->isDrumKit ? 128 : 0);
+        wg_Split* spBase = (wg_Split*)((char*)base + splitOff);
         
-        t_fprintf(0, out,  "Preset: %03d:%03d %s\n", i<128?0:128, i&127, PATNAMES[i]);
-        t_fprintf(0, out,  "U32 structure offset: %08Xh\n", midiMap->t[i]);
+        t_fprintf(0, out,  "Patch: %03u:%03u %s\n", i<128?0:128, i&127, PATNAMES[i]);
+        t_fprintf(0, out,  "structure offset: %08Xh\n", midiMap->t[i]);
         describePatch(1, out, base, patch);
+        t_fprintf(1, out, "Splits:\n\n");
+        
+        for (unsigned int j=0; j < patch->splitNum; j++) {
+            wg_Split*     split  = &spBase[j];
+            wg_SampleHdr* smpHdr = (wg_SampleHdr*)((char*)base + split->smpHeadOff);
+            
+            t_fprintf(2, out, "Split nr: %u\n", j);
+            t_fprintf(2, out,  "structure offset: %08Xh\n", splitOff + j*sizeof(wg_Split));
+            describeSplit(3, out, base, split);
+            t_fprintf(3, out, "Sample header:\n");
+            t_fprintf(3, out,  "structure offset: %08Xh\n", split->smpHeadOff);
+            describeSampleHdr(4, out, base, smpHdr);
+            
+            fprintf(out, "\n");
+        }
         
         fprintf(out, "\n\n\n\n");
     }
@@ -295,7 +299,7 @@ void dumpSamples(char* name, void* base, size_t len) {
                 sprintf(outName, "%s"SMP_SUF"/%s.wav", name, sampleName);
                 
                 if (doWrite) {
-                    if(!isFileExist(outName)) writeWav(smpHdr, base, outName);
+                    if(!isFileExist(outName)) writeWav(smpHdr, base, outName, 1);
                 } else {
                     //good enough
                     remove(outName);
@@ -353,11 +357,11 @@ void dumpSfz(char* name, void* base, size_t len) {
             FILE* sfzout = NULL;
             
             if (!patch->volume) continue;
-            sprintf(outName, "%s"SFZ_SUF"/%s/%03d %03d %s.sfz", name, i>>7?"drm":"mel", i&127, i&127, PATNAMES[i]);
+            sprintf(outName, "%s"SFZ_SUF"/%s/%03u %03u %s.sfz", name, i>>7?"drm":"mel", i&127, i&127, PATNAMES[i]);
             if (doWrite) {
                 sfzout = fopen(outName, "w");
                 if (!sfzout) continue;
-                //printf("Patch: %03d:%03d %s\n", 128*(i>>7), i&127, PATNAMES[i]);
+                //printf("Patch: %03u:%03u %s\n", 128*(i>>7), i&127, PATNAMES[i]);
                 
                 fprintf(sfzout,
                     "//SFZ exported by WG-Knife, version 0.00000000000001\n"
@@ -385,12 +389,12 @@ void dumpSfz(char* name, void* base, size_t len) {
                     uint32_t loopStart = (smpHdr->offLoop - smpHdr->offStart) / numChans;
                     uint32_t loopEnd   = (smpHdr->offEnd  - smpHdr->offStart) / numChans;
                     
-                    if(!isFileExist(outName)) writeWav(smpHdr, base, outName);
+                    if(!isFileExist(outName)) writeWav(smpHdr, base, outName, 0);
                     
                     fprintf(sfzout,
                         "<region>\n"
                         "sample=../samples/%s.wav\n"
-                        "lokey=%d hikey=%d\n"
+                        "lokey=%u hikey=%u\n"
                         "pitch_keytrack=%i\n"
                         "transpose=%i\n"
                         "tune=%i\n"
@@ -405,12 +409,12 @@ void dumpSfz(char* name, void* base, size_t len) {
                         smpHdr->offStart ? "loop_continuous" : "no_loop"
                     );
                     
-                    if (smpHdr->offLoop) fprintf(sfzout, "loop_start=%d loop_end=%d\n", loopStart, loopEnd);
+                    if (smpHdr->offLoop) fprintf(sfzout, "loop_start=%u loop_end=%u\n", loopStart, loopEnd);
                     
-                    if(smpHdr->lenAttack)  fprintf(sfzout, "ampeg_attack=%f\n",  toSfzEnvelope(smpHdr->lenAttack));
-                    if(smpHdr->lenDecay)   fprintf(sfzout, "ampeg_decay=%f\n",   toSfzEnvelope(smpHdr->lenDecay));
-                    if(smpHdr->volSustain) fprintf(sfzout, "ampeg_sustain=%f\n", toSfzAmpEGVolume(smpHdr->volSustain));
-                    if(smpHdr->lenRelease) fprintf(sfzout, "ampeg_release=%f\n", toSfzEnvelope(smpHdr->lenRelease));
+                    fprintf(sfzout, "ampeg_attack=%f\n",  toSfzEnvelope(smpHdr->lenAttack));
+                    fprintf(sfzout, "ampeg_decay=%f\n",   toSfzEnvelope(smpHdr->lenDecay));
+                    fprintf(sfzout, "ampeg_hold=%f\n",    toSfzEnvelope(smpHdr->volSustain));
+                    fprintf(sfzout, "ampeg_release=%f\n", toSfzEnvelope(smpHdr->lenRelease));
                     
                     fprintf(sfzout, "\n");
                 } else {
